@@ -1,0 +1,13 @@
+node_modules
+.git
+Dockerfile
+Dockerfile.node
+.dockerignore
+.env
+__pycache__
+*.pyc
+# inactive node backend, kept for reference
+*.js
+package.json
+pnpm-lock.yaml
+pnpm-workspace.yaml
