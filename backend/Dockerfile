@@ -1,10 +1,12 @@
-# python backend (FastAPI). The previous node backend is preserved in
-# Dockerfile.node and the *.js files, which are no longer used.
+# start container
 #
-FROM python:3.12-slim
+FROM node:20-alpine
 WORKDIR /app
-COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+# build tools needed to compile native modules (better-sqlite3 via gtfs)
+RUN apk add --no-cache python3 make g++
+RUN npm install -g pnpm
+COPY package*.json pnpm-lock.yaml* pnpm-workspace.yaml* ./
+RUN pnpm install
 COPY . .
 EXPOSE 5000
-CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "5000"]
+CMD ["pnpm", "start"]

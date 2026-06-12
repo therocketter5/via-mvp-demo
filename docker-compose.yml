@@ -29,8 +29,7 @@ services:
       timeout: 5s
       retries: 5
 
-  # backend: python fastapi api (the old express backend is kept in
-  # backend/*.js + Dockerfile.node but is no longer built or run)
+  # backend: node express api
   #
   backend:
     build: ./backend
