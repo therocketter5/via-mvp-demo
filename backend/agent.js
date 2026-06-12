@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import mongoose from 'mongoose';
+import { getStats, getTripsPerRoute, getDeparturesByHour } from './stats.js';
 
 // agent api: POST /api/agent/chat runs Buffi as a tool-calling agent.
 // The model decides which MongoDB-backed tools to call (uploaded sources
@@ -15,9 +16,10 @@ const MAX_ROWS = 200;
 
 const SYSTEM_PROMPT = [
     'You are Buffi, a helpful data assistant for the VIA MVP platform.',
-    'You can query two kinds of data via tools:',
+    'You can query three kinds of data via tools:',
     '1. CSV sources the user uploaded (list_sources, get_source_rows).',
     '2. VIA Metropolitan Transit GTFS data for San Antonio (find_nearby_stops, get_stop_departures).',
+    '3. Network-wide VIA dashboard stats (get_stats, get_trips_per_route, get_departures_by_hour).',
     'Call tools to look at real data before answering; never invent values.',
     'If the answer requires data that is not available, say so.',
     'Use Markdown. Be concise.'
@@ -77,6 +79,33 @@ const TOOLS = [
                 required: ['stop_id']
             }
         }
+    },
+    // dashboard stats tools — same names and descriptions as the in-browser
+    // fallback agent (frontend/src/services/agent.js), but backed by the live
+    // Mongo aggregations in stats.js instead of the static snapshot
+    {
+        type: 'function',
+        function: {
+            name: 'get_stats',
+            description: 'Overall VIA network stats: counts of routes, stops, scheduled trips, and stop departures, plus GTFS feed version and validity dates.',
+            parameters: { type: 'object', properties: {} }
+        }
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'get_trips_per_route',
+            description: 'The 10 busiest VIA routes by number of scheduled trips, with route names.',
+            parameters: { type: 'object', properties: {} }
+        }
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'get_departures_by_hour',
+            description: 'Total scheduled stop departures across the VIA network for each hour of the day.',
+            parameters: { type: 'object', properties: {} }
+        }
     }
 ];
 
@@ -129,6 +158,10 @@ async function runTool(name, args) {
             }
         ]).toArray();
     }
+
+    if (name === 'get_stats') return getStats();
+    if (name === 'get_trips_per_route') return getTripsPerRoute();
+    if (name === 'get_departures_by_hour') return getDeparturesByHour();
 
     return { error: `Unknown tool: ${name}` };
 }
