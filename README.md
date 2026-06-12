@@ -31,6 +31,15 @@ Run from the `frontend/` directory:
 - `npm run build` — production build
 - `npm test` — run tests
 
+## Deployment (GitHub Pages)
+
+Pushing to `main` triggers the [Deploy to GitHub Pages](.github/workflows/deploy-pages.yml)
+workflow, which builds the frontend and publishes it to
+[https://therocketter5.github.io/via-mvp-demo/](https://therocketter5.github.io/via-mvp-demo/).
+The Pages build uses hash-based routing (`REACT_APP_ROUTER=hash`) because GitHub Pages
+can't rewrite deep links to `index.html`; local dev and the Docker/nginx setup keep
+using `BrowserRouter`.
+
 ## How it works
 
 - No backend — the browser calls the OpenAI `/chat/completions` endpoint directly.

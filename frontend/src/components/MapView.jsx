@@ -28,7 +28,7 @@ export default function ZipMap({ highlightData, viewMode }) {
   const [zipCounts, setZipCounts] = useState({}); // NEW
 
   useEffect(() => {
-    fetch("/data/tx_zips.geojson")
+    fetch(`${process.env.PUBLIC_URL}/data/tx_zips.geojson`)
       .then((res) => res.json())
       .then((data) => {
         const filtered = {
