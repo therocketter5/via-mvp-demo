@@ -1,10 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ResponsiveContainer,
   BarChart, Bar, Cell,
   AreaChart, Area,
   XAxis, YAxis, CartesianGrid, Tooltip,
 } from 'recharts';
+import BuffiChat from './BuffiChat';
+import { VIA_DATA_TOOLS } from '../../../frontend/src/services/agent';
 import './ViaDashboard.css';
 
 // Via dashboard — all of Via's visualization UI lives in this folder.
@@ -35,6 +37,50 @@ async function getSnapshotJson(file) {
   if (!res.ok) throw new Error(`Snapshot request failed: ${res.status}`);
   return res.json();
 }
+
+// View state Buffi can change through the update_dashboard tool.
+const MAX_ROUTES = 50;
+const DEFAULT_VIEW = { routeLimit: 10, highlightRoute: null, hourMin: 0, hourMax: 23 };
+const DIM_GREY = '#e2e2e6';
+
+const CHAT_SYSTEM_PROMPT = [
+  'You are Buffi, a data assistant embedded in the VIA Metropolitan Transit dashboard.',
+  'Query VIA GTFS schedule data with get_stats, get_trips_per_route, and get_departures_by_hour.',
+  'Change what the dashboard charts display with update_dashboard: how many of the busiest',
+  'routes are charted, which route is highlighted, and the hour range of the departures chart.',
+  'When the user asks to show, focus on, filter, highlight, or reset the view, call update_dashboard.',
+  'Call tools to look at real data before answering; never invent values.',
+  'Use Markdown. Be concise.',
+].join(' ');
+
+const UPDATE_DASHBOARD_TOOL = {
+  type: 'function',
+  function: {
+    name: 'update_dashboard',
+    description: 'Change what the VIA dashboard charts display. Omitted fields keep their current value.',
+    parameters: {
+      type: 'object',
+      properties: {
+        top_routes_limit: {
+          type: 'integer',
+          description: `How many of the busiest routes to chart (1-${MAX_ROUTES}).`,
+        },
+        highlight_route_short_name: {
+          type: 'string',
+          description: 'Route short name (e.g. "100") to highlight in the routes chart; other bars are dimmed. Empty string clears the highlight.',
+        },
+        hour_min: { type: 'integer', description: 'First hour (0-23) shown in the departures-by-hour chart.' },
+        hour_max: { type: 'integer', description: 'Last hour (0-23) shown in the departures-by-hour chart.' },
+        reset: { type: 'boolean', description: 'Reset the dashboard to its default view.' },
+      },
+    },
+  },
+};
+
+const clampInt = (v, lo, hi, fallback) => {
+  const n = Number.isFinite(v) ? Math.round(v) : fallback;
+  return Math.max(lo, Math.min(hi, n));
+};
 
 const fmt = (n) => (typeof n === 'number' ? n.toLocaleString() : '—');
 
@@ -77,12 +123,15 @@ export default function ViaDashboard({ data = null, files = [] }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [isSnapshot, setIsSnapshot] = useState(false);
+  const [view, setView] = useState(DEFAULT_VIEW);
+  const viewRef = useRef(DEFAULT_VIEW);
+  const routesRef = useRef([]);
 
   useEffect(() => {
     let cancelled = false;
     Promise.all([
       getJson('/api/stats'),
-      getJson('/api/stats/trips-per-route?limit=10'),
+      getJson(`/api/stats/trips-per-route?limit=${MAX_ROUTES}`),
       getJson('/api/stats/departures-by-hour'),
     ])
       .catch(() =>
@@ -99,12 +148,58 @@ export default function ViaDashboard({ data = null, files = [] }) {
         if (cancelled) return;
         setStats(s);
         setTopRoutes(routes);
+        routesRef.current = routes;
         setByHour(hours);
       })
       .catch((err) => { if (!cancelled) setError(err.message); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, []);
+
+  // Executes Buffi's update_dashboard tool calls. Uses refs (not state) so the
+  // closure stays valid for the whole multi-round agent loop.
+  const applyDashboardUpdate = useCallback((args = {}) => {
+    const prev = viewRef.current;
+    let next;
+    if (args.reset) {
+      next = { ...DEFAULT_VIEW };
+    } else {
+      next = {
+        routeLimit: clampInt(args.top_routes_limit, 1, MAX_ROUTES, prev.routeLimit),
+        highlightRoute:
+          args.highlight_route_short_name === undefined
+            ? prev.highlightRoute
+            : String(args.highlight_route_short_name).trim() || null,
+        hourMin: clampInt(args.hour_min, 0, 23, prev.hourMin),
+        hourMax: clampInt(args.hour_max, 0, 23, prev.hourMax),
+      };
+      if (next.hourMin > next.hourMax) {
+        [next.hourMin, next.hourMax] = [next.hourMax, next.hourMin];
+      }
+    }
+
+    const result = { ok: true };
+    if (next.highlightRoute) {
+      const idx = routesRef.current.findIndex((r) => r.route_short_name === next.highlightRoute);
+      if (idx === -1) {
+        result.warning = `Route "${next.highlightRoute}" is not among the ${routesRef.current.length} busiest routes, so nothing is highlighted.`;
+        result.available_route_short_names = routesRef.current.map((r) => r.route_short_name);
+      } else if (idx >= next.routeLimit) {
+        // Widen the chart so the highlighted route is actually visible.
+        next.routeLimit = idx + 1;
+      }
+    }
+
+    viewRef.current = next;
+    setView(next);
+    result.view = next;
+    return result;
+  }, []);
+
+  const chatTools = useMemo(
+    () => [...VIA_DATA_TOOLS, { definition: UPDATE_DASHBOARD_TOOL, run: applyDashboardUpdate }],
+    [applyDashboardUpdate],
+  );
 
   if (loading) {
     return (
@@ -123,6 +218,10 @@ export default function ViaDashboard({ data = null, files = [] }) {
       </div>
     );
   }
+
+  const shownRoutes = topRoutes.slice(0, view.routeLimit);
+  const shownHours = byHour.filter((d) => d.hour >= view.hourMin && d.hour <= view.hourMax);
+  const fullDay = view.hourMin === 0 && view.hourMax === 23;
 
   const kpis = [
     { label: 'Bus Routes', value: stats.routes },
@@ -154,18 +253,25 @@ export default function ViaDashboard({ data = null, files = [] }) {
 
       <div className="via-chart-grid">
         <div className="via-chart-card">
-          <h3 className="via-chart-title">Busiest Routes by Scheduled Trips</h3>
+          <h3 className="via-chart-title">
+            Busiest Routes by Scheduled Trips (top {view.routeLimit})
+            {view.highlightRoute && ` · highlighting ${view.highlightRoute}`}
+          </h3>
           <ResponsiveContainer width="100%" height={260}>
-            <BarChart data={topRoutes} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+            <BarChart data={shownRoutes} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" vertical={false} />
               <XAxis dataKey="route_short_name" tick={{ fontSize: 12 }} />
               <YAxis tick={{ fontSize: 12 }} width={48} />
               <Tooltip content={<RouteTooltip />} />
               <Bar dataKey="trips" radius={[4, 4, 0, 0]}>
-                {topRoutes.map((r) => (
+                {shownRoutes.map((r) => (
                   <Cell
                     key={r.route_id}
-                    fill={r.route_color ? `#${r.route_color}` : VIA_RED}
+                    fill={
+                      view.highlightRoute && r.route_short_name !== view.highlightRoute
+                        ? DIM_GREY
+                        : r.route_color ? `#${r.route_color}` : VIA_RED
+                    }
                   />
                 ))}
               </Bar>
@@ -174,15 +280,18 @@ export default function ViaDashboard({ data = null, files = [] }) {
         </div>
 
         <div className="via-chart-card">
-          <h3 className="via-chart-title">System Departures by Hour</h3>
+          <h3 className="via-chart-title">
+            System Departures by Hour
+            {!fullDay && ` (${hourLabel(view.hourMin)} – ${hourLabel(view.hourMax)})`}
+          </h3>
           <ResponsiveContainer width="100%" height={260}>
-            <AreaChart data={byHour} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+            <AreaChart data={shownHours} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" vertical={false} />
               <XAxis
                 dataKey="hour"
                 tickFormatter={hourLabel}
                 tick={{ fontSize: 12 }}
-                interval={3}
+                interval={shownHours.length > 12 ? 3 : 0}
               />
               <YAxis tick={{ fontSize: 12 }} width={56} />
               <Tooltip content={<HourTooltip />} />
@@ -198,6 +307,12 @@ export default function ViaDashboard({ data = null, files = [] }) {
           </ResponsiveContainer>
         </div>
       </div>
+
+      <BuffiChat
+        systemPrompt={CHAT_SYSTEM_PROMPT}
+        tools={chatTools}
+        suggestion="highlight the busiest route and show only morning departures"
+      />
     </div>
   );
 }

@@ -75,7 +75,7 @@ async function main() {
     const routes = readCsv('routes.txt');
     const feedInfo = readCsv('feed_info.txt')[0] || null;
 
-    // trips per route (top 10, like getTripsPerRoute)
+    // trips per route (top 50 — the dashboard charts a slice, like getTripsPerRoute)
     const tripCounts = new Map();
     let tripsTotal = 0;
     await streamCsv('trips.txt', (header, line) => {
@@ -86,7 +86,7 @@ async function main() {
     const routeById = new Map(routes.map((r) => [r.route_id, r]));
     const tripsPerRoute = [...tripCounts.entries()]
         .sort((a, b) => b[1] - a[1])
-        .slice(0, 10)
+        .slice(0, 50)
         .map(([route_id, trips]) => {
             const r = routeById.get(route_id) || {};
             return {

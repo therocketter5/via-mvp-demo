@@ -1,0 +1,142 @@
+/* Floating Buffi chat on the Via dashboard */
+
+.via-chat-fab,
+.via-chat-window {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 40;
+  font-family: "Saans TRIAL", sans-serif;
+}
+
+.via-chat-fab {
+  border: none;
+  border-radius: 999px;
+  background: #cb2128;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 10px 18px;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+}
+
+.via-chat-window {
+  width: 320px;
+  height: 380px;
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border: 1px solid var(--Grey-200, #e5e5e7);
+  border-radius: 12px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.16);
+  overflow: hidden;
+}
+
+.via-chat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  background: #cb2128;
+  color: #fff;
+}
+
+.via-chat-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.via-chat-minimize {
+  border: none;
+  background: none;
+  color: #fff;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+.via-chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.via-chat-empty {
+  font-size: 12px;
+  color: var(--Grey-500, #888);
+  padding: 6px 2px;
+}
+
+.via-chat-msg {
+  max-width: 85%;
+  border-radius: 10px;
+  padding: 7px 10px;
+  font-size: 13px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.via-chat-msg--user {
+  align-self: flex-end;
+  background: #cb2128;
+  color: #fff;
+}
+
+.via-chat-msg--bot {
+  align-self: flex-start;
+  background: var(--Grey-100, #f2f2f4);
+  color: var(--Grey-900, #1a1a1c);
+  white-space: normal;
+}
+
+.via-chat-msg--bot p {
+  margin: 0 0 6px;
+}
+
+.via-chat-msg--bot p:last-child {
+  margin-bottom: 0;
+}
+
+.via-chat-inputrow {
+  display: flex;
+  gap: 6px;
+  padding: 8px;
+  border-top: 1px solid var(--Grey-200, #e5e5e7);
+}
+
+.via-chat-input {
+  flex: 1;
+  border: 1px solid var(--Grey-200, #e5e5e7);
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+}
+
+.via-chat-input:focus {
+  border-color: #cb2128;
+}
+
+.via-chat-send {
+  border: none;
+  border-radius: 8px;
+  background: #cb2128;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 7px 12px;
+  cursor: pointer;
+}
+
+.via-chat-send:disabled {
+  background: var(--Grey-200, #e5e5e7);
+  color: var(--Grey-500, #888);
+  cursor: default;
+}

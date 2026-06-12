@@ -5,8 +5,10 @@
 //
 // When no backend is reachable (e.g. the static GitHub Pages deploy), the
 // agent runs directly in the browser instead: the same tool-calling loop
-// against OpenAI, with tools backed by the static stats snapshot generated
-// by backend/export-static-stats.js.
+// against OpenAI (runBrowserAgent), with data tools that read the live REST
+// endpoints when available and otherwise the static stats snapshot generated
+// by backend/export-static-stats.js. Callers can pass extra client-side tools
+// to runBrowserAgent (e.g. the Via dashboard's update_dashboard control).
 import { API_BASE } from './api';
 import { getStoredApiKey, getStoredModel } from './openai';
 
@@ -37,8 +39,8 @@ export async function chatWithAgent({ userMessage, history = [], signal }) {
   } catch (err) {
     if (err?.name === 'AbortError') throw err;
     // Network failure — backend isn't running. Fall back to the in-browser
-    // agent over the static stats snapshot.
-    return chatWithStaticAgent({ apiKey, userMessage, history, signal });
+    // agent over the snapshot-backed data tools.
+    return runBrowserAgent({ userMessage, history, signal });
   }
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -48,70 +50,80 @@ export async function chatWithAgent({ userMessage, history = [], signal }) {
   return data.reply || '(Empty response.)';
 }
 
-// --- in-browser fallback agent (static snapshot) ---------------------------
+// --- in-browser agent -------------------------------------------------------
 
-const STATIC_SYSTEM_PROMPT = [
+const DEFAULT_SYSTEM_PROMPT = [
   'You are Buffi, a helpful data assistant for the VIA MVP platform.',
   'You can query VIA Metropolitan Transit (San Antonio) data via tools.',
-  'The data is a precomputed static snapshot of the GTFS schedule — network-wide',
-  'stats, busiest routes, and departures by hour. Per-stop or per-trip detail',
-  'and uploaded CSV sources are not available in this deployment; if asked for',
-  'those, say so.',
+  'The data is the GTFS schedule — network-wide stats, busiest routes, and',
+  'departures by hour. Per-stop or per-trip detail and uploaded CSV sources',
+  'are not available in this deployment; if asked for those, say so.',
   'Call tools to look at real data before answering; never invent values.',
   'Use Markdown. Be concise.',
 ].join(' ');
 
-const STATIC_TOOLS = [
-  {
-    type: 'function',
-    function: {
-      name: 'get_stats',
-      description: 'Overall VIA network stats: counts of routes, stops, scheduled trips, and stop departures, plus GTFS feed version and validity dates.',
-      parameters: { type: 'object', properties: {} },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'get_trips_per_route',
-      description: 'The 10 busiest VIA routes by number of scheduled trips, with route names.',
-      parameters: { type: 'object', properties: {} },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'get_departures_by_hour',
-      description: 'Total scheduled stop departures across the VIA network for each hour of the day.',
-      parameters: { type: 'object', properties: {} },
-    },
-  },
-];
-
-const SNAPSHOT_FILES = {
-  get_stats: 'stats.json',
-  get_trips_per_route: 'trips-per-route.json',
-  get_departures_by_hour: 'departures-by-hour.json',
-};
-
 const snapshotCache = new Map();
 
-async function runStaticTool(name) {
-  const file = SNAPSHOT_FILES[name];
-  if (!file) return { error: `Unknown tool: ${name}` };
+async function getSnapshotJson(file) {
+  if (!snapshotCache.has(file)) {
+    const res = await fetch(`${SNAPSHOT_BASE}/${file}`);
+    if (!res.ok) throw new Error(`Snapshot request failed: ${res.status}`);
+    snapshotCache.set(file, await res.json());
+  }
+  return snapshotCache.get(file);
+}
+
+// Live backend first, static snapshot second — same data either way, so the
+// agent behaves identically in docker-compose and on GitHub Pages.
+async function getDataJson(apiPath, snapshotFile) {
   try {
-    if (!snapshotCache.has(file)) {
-      const res = await fetch(`${SNAPSHOT_BASE}/${file}`);
-      if (!res.ok) throw new Error(`Snapshot request failed: ${res.status}`);
-      snapshotCache.set(file, await res.json());
-    }
-    return snapshotCache.get(file);
+    const res = await fetch(`${API_BASE}${apiPath}`);
+    if (!res.ok) throw new Error(`Request failed: ${res.status}`);
+    return await res.json();
   } catch (err) {
-    return { error: `Snapshot data unavailable: ${err.message}` };
+    if (err?.name === 'AbortError') throw err;
+    return getSnapshotJson(snapshotFile);
   }
 }
 
-async function callOpenAI(apiKey, messages, signal) {
+// Tool shape: { definition: <OpenAI tool definition>, run(args) → result }.
+export const VIA_DATA_TOOLS = [
+  {
+    definition: {
+      type: 'function',
+      function: {
+        name: 'get_stats',
+        description: 'Overall VIA network stats: counts of routes, stops, scheduled trips, and stop departures, plus GTFS feed version and validity dates.',
+        parameters: { type: 'object', properties: {} },
+      },
+    },
+    run: () => getDataJson('/api/stats', 'stats.json'),
+  },
+  {
+    definition: {
+      type: 'function',
+      function: {
+        name: 'get_trips_per_route',
+        description: 'The busiest VIA routes by number of scheduled trips, with route names (top 50).',
+        parameters: { type: 'object', properties: {} },
+      },
+    },
+    run: () => getDataJson('/api/stats/trips-per-route?limit=50', 'trips-per-route.json'),
+  },
+  {
+    definition: {
+      type: 'function',
+      function: {
+        name: 'get_departures_by_hour',
+        description: 'Total scheduled stop departures across the VIA network for each hour of the day.',
+        parameters: { type: 'object', properties: {} },
+      },
+    },
+    run: () => getDataJson('/api/stats/departures-by-hour', 'departures-by-hour.json'),
+  },
+];
+
+async function callOpenAI(apiKey, messages, toolDefinitions, signal) {
   const res = await fetch(OPENAI_URL, {
     method: 'POST',
     signal,
@@ -122,7 +134,7 @@ async function callOpenAI(apiKey, messages, signal) {
     body: JSON.stringify({
       model: getStoredModel(),
       messages,
-      tools: STATIC_TOOLS,
+      tools: toolDefinitions,
     }),
   });
   if (!res.ok) {
@@ -137,8 +149,20 @@ async function callOpenAI(apiKey, messages, signal) {
   return data.choices?.[0]?.message;
 }
 
-async function chatWithStaticAgent({ apiKey, userMessage, history, signal }) {
-  const messages = [{ role: 'system', content: STATIC_SYSTEM_PROMPT }];
+export async function runBrowserAgent({
+  userMessage,
+  history = [],
+  signal,
+  systemPrompt = DEFAULT_SYSTEM_PROMPT,
+  tools = VIA_DATA_TOOLS,
+}) {
+  const apiKey = getStoredApiKey();
+  if (!apiKey) {
+    throw new Error('No API key set. Add your OpenAI API key in Settings.');
+  }
+  const toolByName = new Map(tools.map((t) => [t.definition.function.name, t]));
+
+  const messages = [{ role: 'system', content: systemPrompt }];
   for (const m of history) {
     if (!m || !m.text) continue;
     messages.push({ role: m.from === 'user' ? 'user' : 'assistant', content: m.text });
@@ -146,7 +170,7 @@ async function chatWithStaticAgent({ apiKey, userMessage, history, signal }) {
   messages.push({ role: 'user', content: userMessage });
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-    const reply = await callOpenAI(apiKey, messages, signal);
+    const reply = await callOpenAI(apiKey, messages, tools.map((t) => t.definition), signal);
     if (!reply) throw new Error('OpenAI returned an empty response.');
     if (!reply.tool_calls || reply.tool_calls.length === 0) {
       return reply.content || '(Empty response.)';
@@ -154,7 +178,18 @@ async function chatWithStaticAgent({ apiKey, userMessage, history, signal }) {
 
     messages.push(reply);
     for (const call of reply.tool_calls) {
-      const result = await runStaticTool(call.function.name);
+      const tool = toolByName.get(call.function.name);
+      let result;
+      if (!tool) {
+        result = { error: `Unknown tool: ${call.function.name}` };
+      } else {
+        try {
+          result = await tool.run(JSON.parse(call.function.arguments || '{}'));
+        } catch (err) {
+          if (err?.name === 'AbortError') throw err;
+          result = { error: err.message };
+        }
+      }
       messages.push({
         role: 'tool',
         tool_call_id: call.id,

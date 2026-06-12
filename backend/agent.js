@@ -95,7 +95,7 @@ const TOOLS = [
         type: 'function',
         function: {
             name: 'get_trips_per_route',
-            description: 'The 10 busiest VIA routes by number of scheduled trips, with route names.',
+            description: 'The busiest VIA routes by number of scheduled trips, with route names (top 50).',
             parameters: { type: 'object', properties: {} }
         }
     },
@@ -160,7 +160,7 @@ async function runTool(name, args) {
     }
 
     if (name === 'get_stats') return getStats();
-    if (name === 'get_trips_per_route') return getTripsPerRoute();
+    if (name === 'get_trips_per_route') return getTripsPerRoute(50);
     if (name === 'get_departures_by_hour') return getDeparturesByHour();
 
     return { error: `Unknown tool: ${name}` };
